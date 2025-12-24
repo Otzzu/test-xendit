@@ -4,7 +4,7 @@ import { TransactionService } from '../transaction/transaction.service';
 export class PaymentService {
   constructor(private readonly txService: TransactionService) {}
 
-  createPayment(accountId: number, amount: number): Transaction {
+  async createPayment(accountId: number, amount: number): Promise<Transaction> {
     return this.txService.authorizeTransaction(accountId, amount);
   }
 }
