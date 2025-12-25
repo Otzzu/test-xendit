@@ -7,7 +7,7 @@ export class AccountService {
 
     async creditAfterSettlement(accountId: number, amount: number): Promise<Account> {
         // Simulated async delay
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 5000));
         return this.repo.credit(accountId, amount);
     }
 
