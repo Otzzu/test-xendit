@@ -1,7 +1,7 @@
 import { HttpError } from '../../shared/errors/http-error';
 import { AccountService } from '../account/account.service';
-import { CyberSourceSimulator } from '../cybersource/cybersource.simulator';
-import { Transaction, TransactionStatus } from './transaction.entity';
+import { CyberSourceSimulator } from '../../infrastructure/gateways/cybersource.simulator';
+import { Transaction } from './transaction.entity';
 import { TransactionRepository } from './transaction.repository';
 
 export class TransactionService {

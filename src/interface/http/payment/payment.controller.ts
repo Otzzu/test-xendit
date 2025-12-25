@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { PaymentService } from './payment.service';
+import { PaymentService } from '../../../modules/payment/payment.service';
 import { validateCreatePaymentRequest } from './payment.dto';
 
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(private readonly paymentService: PaymentService) { }
 
   createPayment = async (req: Request, res: Response) => {
     const { accountId, amount } = validateCreatePaymentRequest(req.body);

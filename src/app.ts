@@ -1,9 +1,7 @@
 import express from 'express';
-import { buildPaymentRouter } from './modules/payment/payment.routes';
 import { errorHandler } from './shared/errors/error-handler';
 
-import { buildAccountRouter } from './modules/account/account.routes';
-import { buildTransactionRouter } from './modules/transaction/transaction.routes';
+import { buildHttpRouter } from './interface/http';
 
 const app = express();
 
@@ -14,9 +12,8 @@ app.get('/health', (_req, res) => {
 });
 
 // API routes
-app.use('/api', buildPaymentRouter());
-app.use('/api/transactions', buildTransactionRouter());
-app.use('/api/accounts', buildAccountRouter());
+app.use('/api', buildHttpRouter());
+
 app.use(errorHandler);
 
 export default app;

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { TransactionService } from './transaction.service';
+import { TransactionService } from '../../../modules/transaction/transaction.service';
 
 export class TransactionController {
     constructor(private readonly service: TransactionService) { }
