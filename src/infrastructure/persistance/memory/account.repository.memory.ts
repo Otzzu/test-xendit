@@ -1,10 +1,10 @@
-import { Account } from '../../modules/account/account.entity';
-import { AccountRepository } from '../../modules/account/account.repository';
+import { Account } from '../../../modules/account/account.entity';
+import { AccountRepository } from '../../../modules/account/account.repository';
 
 import { db } from './memory-db';
 
 export class InMemoryAccountRepository implements AccountRepository {
-    getOrCreate(accountId: number): Account {
+    async getOrCreate(accountId: number): Promise<Account> {
         const existing = db.accounts.get(accountId);
         if (existing) return existing;
 
@@ -14,12 +14,12 @@ export class InMemoryAccountRepository implements AccountRepository {
         return created;
     }
 
-    get(accountId: number): Account | undefined {
+    async get(accountId: number): Promise<Account | undefined> {
         return db.accounts.get(accountId);
     }
 
-    credit(accountId: number, amount: number): Account {
-        const acc = this.getOrCreate(accountId);
+    async credit(accountId: number, amount: number): Promise<Account> {
+        const acc = await this.getOrCreate(accountId);
         const now = new Date().toISOString();
 
         const updated: Account = {

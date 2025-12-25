@@ -11,11 +11,14 @@ export class TransactionService {
     private readonly accountService: AccountService
   ) { }
 
-  authorizeTransaction(accountId: number, amount: number): Transaction {
+  async authorizeTransaction(accountId: number, amount: number): Promise<Transaction> {
+    // Ensure account exists before creating transaction (required for FK constraint)
+    await this.accountService.getAccount(accountId);
+
     const { authId } = this.gateway.authorize(accountId, amount);
 
     const now = new Date().toISOString();
-    return this.repo.save({
+    return await this.repo.save({
       accountId,
       amount,
       status: 'AUTHORIZED',
@@ -26,7 +29,7 @@ export class TransactionService {
   }
 
   async settleTransaction(transactionId: number): Promise<void> {
-    const tx = this.repo.findById(transactionId);
+    const tx = await this.repo.findById(transactionId);
     if (!tx) {
       throw new HttpError(404, 'NOT_FOUND', 'Transaction not found');
     }
@@ -50,7 +53,7 @@ export class TransactionService {
       tx.status = 'SETTLED';
       tx.settlementId = settlementId;
       tx.updatedAt = now;
-      this.repo.update(tx);
+      await this.repo.update(tx);
 
       void this.accountService.creditAfterSettlement(tx.accountId, tx.amount);
     } catch (err: unknown) {
@@ -64,15 +67,15 @@ export class TransactionService {
 
       tx.failureReason = message;
       tx.updatedAt = now;
-      this.repo.update(tx);
+      await this.repo.update(tx);
 
-      // For background processing, we log and swallow.
-      console.error('Settlement error', { transactionId, err });
+      // For background processing, we log the message only to avoid Jest stack overflow with complex error objects
+      console.error(`Settlement error for tx ${transactionId}: ${message}`);
     }
   }
 
-  getTransaction(id: number): Transaction {
-    const tx = this.repo.findById(id);
+  async getTransaction(id: number): Promise<Transaction> {
+    const tx = await this.repo.findById(id);
     if (!tx) throw new HttpError(404, 'NOT_FOUND', 'Transaction not found');
     return tx;
   }

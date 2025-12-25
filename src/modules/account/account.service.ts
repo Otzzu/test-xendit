@@ -11,7 +11,7 @@ export class AccountService {
         return this.repo.credit(accountId, amount);
     }
 
-    getAccount(accountId: number): Account {
-        return this.repo.getOrCreate(accountId);
+    async getAccount(accountId: number): Promise<Account> {
+        return await this.repo.getOrCreate(accountId);
     }
 }
