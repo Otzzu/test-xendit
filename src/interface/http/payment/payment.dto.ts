@@ -1,4 +1,4 @@
-import { HttpError } from '../../shared/errors/http-error';
+import { HttpError } from '../../../shared/errors/http-error';
 
 export interface CreatePaymentRequest {
   accountId: number;
