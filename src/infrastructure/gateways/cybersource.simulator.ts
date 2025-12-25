@@ -13,9 +13,9 @@ export interface SettlementResult {
 
 export class CyberSourceSimulator {
     constructor(
-        private readonly settlementDelayMs: number = 10000,
+        private readonly settlementDelayMs: number = 20000,
         private readonly mode: GatewayMode = 'ALWAYS_OK',
-        private readonly failRate: number = 0.1 
+        private readonly failRate: number = 0.1
     ) { }
 
     authorize(_accountId: number, _amount: number): AuthorizationResult {

@@ -53,10 +53,16 @@ export class TransactionService {
       this.repo.update(tx);
 
       void this.accountService.creditAfterSettlement(tx.accountId, tx.amount);
-    } catch (err: any) {
+    } catch (err: unknown) {
       const now = new Date().toISOString();
       tx.status = 'FAILED';
-      tx.failureReason = err?.message ?? 'Settlement failed';
+
+      let message = 'Settlement failed';
+      if (err instanceof Error) message = err.message;
+      else if (err instanceof HttpError) message = err.message;
+      else if (typeof err === 'string') message = err;
+
+      tx.failureReason = message;
       tx.updatedAt = now;
       this.repo.update(tx);
 
