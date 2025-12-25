@@ -1,7 +1,7 @@
 import { CyberSourceSimulator } from '../../infrastructure/gateways/cybersource.simulator';
-import { InMemoryAccountRepository } from '../../infrastructure/persistance/account.repository.memory';
-import { db } from '../../infrastructure/persistance/memory-db';
-import { InMemoryTransactionRepository } from '../../infrastructure/persistance/transaction.repository.memory';
+import { InMemoryAccountRepository } from '../../infrastructure/persistance/memory/account.repository.memory';
+import { db } from '../../infrastructure/persistance/memory/memory-db';
+import { InMemoryTransactionRepository } from '../../infrastructure/persistance/memory/transaction.repository.memory';
 
 import { AccountService } from '../../modules/account/account.service';
 import { TransactionService } from '../../modules/transaction/transaction.service';
@@ -30,33 +30,31 @@ describe('TransactionService (service-level)', () => {
         const txService = new TransactionService(txRepo, gateway, accountService);
 
         // Act: authorize
-        const tx = txService.authorizeTransaction(1, 1000);
+        const tx = await txService.authorizeTransaction(1, 1000);
 
         // Assert: authorized immediately
         expect(tx.status).toBe('AUTHORIZED');
 
         // Balance should NOT change on authorize
-        expect(accountService.getAccount(1).balance).toBe(0);
+        expect((await accountService.getAccount(1)).balance).toBe(0);
 
         // Act: settlement runs in background (fire-and-forget)
         void txService.settleTransaction(tx.id);
 
         // Immediately still authorized
-        expect(txService.getTransaction(tx.id).status).toBe('AUTHORIZED');
+        expect((await txService.getTransaction(tx.id)).status).toBe('AUTHORIZED');
 
-        // Advance time for settlement
-        jest.advanceTimersByTime(20000);
+        // Wait for settlement (20s gateway delay)
         await flushMicrotasks();
 
         // Now settled
-        expect(txService.getTransaction(tx.id).status).toBe('SETTLED');
+        expect((await txService.getTransaction(tx.id)).status).toBe('SETTLED');
 
-        // Advance time for balance update async (5000ms ledger delay)
-        jest.advanceTimersByTime(5000);
-        await flushMicrotasks();
+        // Wait for balance update async (5000ms ledger delay) - already flushed above
+        // flushMicrotasks runs ALL timers
 
         // Balance credited
-        expect(accountService.getAccount(1).balance).toBe(1000);
+        expect((await accountService.getAccount(1)).balance).toBe(1000);
     });
 
     it('is idempotent: settling an already SETTLED transaction does not double-credit balance', async () => {
@@ -66,26 +64,20 @@ describe('TransactionService (service-level)', () => {
         const gateway = new CyberSourceSimulator(20000, 'ALWAYS_OK');
         const txService = new TransactionService(txRepo, gateway, accountService);
 
-        const tx = txService.authorizeTransaction(1, 1000);
+        const tx = await txService.authorizeTransaction(1, 1000);
 
         void txService.settleTransaction(tx.id);
-        jest.advanceTimersByTime(20000);
-        await flushMicrotasks();
-        jest.advanceTimersByTime(5000);
         await flushMicrotasks();
 
-        expect(txService.getTransaction(tx.id).status).toBe('SETTLED');
-        expect(accountService.getAccount(1).balance).toBe(1000);
+        expect((await txService.getTransaction(tx.id)).status).toBe('SETTLED');
+        expect((await accountService.getAccount(1)).balance).toBe(1000);
 
         // settle again
         void txService.settleTransaction(tx.id);
-        jest.advanceTimersByTime(20000);
-        await flushMicrotasks();
-        jest.advanceTimersByTime(5000);
         await flushMicrotasks();
 
         // still 1000
-        expect(accountService.getAccount(1).balance).toBe(1000);
+        expect((await accountService.getAccount(1)).balance).toBe(1000);
     });
 
     it('handles gateway failure by marking transaction as FAILED', async () => {
@@ -96,19 +88,17 @@ describe('TransactionService (service-level)', () => {
         const gateway = new CyberSourceSimulator(100, 'ALWAYS_FAIL');
         const txService = new TransactionService(txRepo, gateway, accountService);
 
-        const tx = txService.authorizeTransaction(1, 1000);
+        const tx = await txService.authorizeTransaction(1, 1000);
 
         void txService.settleTransaction(tx.id);
-
-        jest.advanceTimersByTime(100);
         await flushMicrotasks();
 
-        const updated = txService.getTransaction(tx.id);
+        const updated = await txService.getTransaction(tx.id);
         expect(updated.status).toBe('FAILED');
         expect(updated.failureReason).toContain('failed');
 
         // Balance NOT credited
-        expect(accountService.getAccount(1).balance).toBe(0);
+        expect((await accountService.getAccount(1)).balance).toBe(0);
     });
 
     it('throws 404 for non-existent transaction', async () => {
@@ -128,7 +118,7 @@ describe('TransactionService (service-level)', () => {
         const gateway = new CyberSourceSimulator(100, 'ALWAYS_OK');
         const txService = new TransactionService(txRepo, gateway, accountService);
 
-        const tx = txRepo.save({
+        const tx = await txRepo.save({
             accountId: 1,
             amount: 100,
             status: 'AUTHORIZED', // but NO authId
@@ -146,7 +136,7 @@ describe('TransactionService (service-level)', () => {
         const gateway = new CyberSourceSimulator(100, 'ALWAYS_OK');
         const txService = new TransactionService(txRepo, gateway, accountService);
 
-        const tx = txRepo.save({
+        const tx = await txRepo.save({
             accountId: 1,
             amount: 100,
             status: 'FAILED',
@@ -160,7 +150,7 @@ describe('TransactionService (service-level)', () => {
         await txService.settleTransaction(tx.id);
 
         // Nothing changes
-        const check = txService.getTransaction(tx.id);
+        const check = await txService.getTransaction(tx.id);
         expect(check.status).toBe('FAILED');
         expect(check.failureReason).toBe('Previously failed');
     });

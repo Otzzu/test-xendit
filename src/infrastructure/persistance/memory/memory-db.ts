@@ -1,5 +1,5 @@
-import { Account } from '../../modules/account/account.entity';
-import { Transaction } from '../../modules/transaction/transaction.entity';
+import { Account } from '../../../modules/account/account.entity';
+import { Transaction } from '../../../modules/transaction/transaction.entity';
 
 class MemoryDB {
     private static instance: MemoryDB;

@@ -1,5 +1,4 @@
-export async function flushMicrotasks(times = 5): Promise<void> {
-  for (let i = 0; i < times; i++) {
-    await Promise.resolve();
-  }
+export async function flushMicrotasks(): Promise<void> {
+    // Flush all pending timers and their resulting promises
+    await jest.runAllTimersAsync();
 }

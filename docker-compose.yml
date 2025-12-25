@@ -1,16 +1,35 @@
-version: '3.8'
-
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: xendit
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U app -d xendit" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   app:
     build: .
     ports:
       - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
     environment:
+      - DATABASE_URL=postgresql://app:app@db:5432/xendit
       - NODE_ENV=production
-      - PORT=3000
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:3000/health || exit 1" ]
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -19,6 +38,15 @@ services:
     build:
       context: .
       target: builder
-    command: npm run test:ci
+    # Run tests conditionally based on USE_POSTGRES env var (mimics App behavior). unset NODE_OPTIONS to fix lingering flag issues.
+    command: sh -c "unset NODE_OPTIONS; if [ \"$$USE_POSTGRES\" = \"true\" ]; then echo '--- MODE PostgreSQL Integration Tests ---'; npx prisma migrate deploy && npx jest src/tests/service/transaction.service.postgres.test.ts --forceExit; else echo '--- MODE In-Memory Unit Tests ---'; npx jest src/tests --testPathIgnorePatterns=postgres --forceExit; fi"
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       - NODE_ENV=test
+      - DATABASE_URL=postgresql://app:app@db:5432/xendit
+      - USE_POSTGRES=false
+
+volumes:
+  pgdata:
