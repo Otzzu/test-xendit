@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { AccountService } from './account.service';
+import { AccountService } from '../../../modules/account/account.service';
 
 export class AccountController {
     constructor(private readonly service: AccountService) { }
