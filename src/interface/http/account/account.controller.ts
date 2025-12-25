@@ -6,7 +6,7 @@ export class AccountController {
 
     getAccount = async (req: Request, res: Response) => {
         const id = Number(req.params.id);
-        const acc = this.service.getAccount(id);
+        const acc = await this.service.getAccount(id);
         return res.json({ message: 'OK', data: acc });
     };
 }
