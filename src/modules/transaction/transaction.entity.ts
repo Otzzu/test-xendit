@@ -1,4 +1,4 @@
-export type TransactionStatus = 'PENDING' | 'AUTHORIZED' | 'SETTLED';
+export type TransactionStatus = 'PENDING' | 'AUTHORIZED' | 'SETTLED' | 'FAILED';
 
 export interface Transaction {
   id: number;
@@ -7,4 +7,8 @@ export interface Transaction {
   status: TransactionStatus;
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
+
+  authId?: string;
+  settlementId?: string;
+  failureReason?: string;
 }
