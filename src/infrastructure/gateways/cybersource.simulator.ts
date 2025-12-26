@@ -32,23 +32,41 @@ export class CyberSourceSimulator {
     }
 
     private scheduleSettlementWebhook(authId: string): void {
-        setTimeout(async () => {
-            const payload = this.generateSettlementPayload(authId);
-            try {
-                const response = await fetch(this.webhookUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                if (!response.ok) {
-                    logger.error('CyberSource webhook failed', { authId, statusCode: response.status });
-                } else {
-                    logger.info('CyberSource webhook sent', { authId, status: payload.status });
-                }
-            } catch (err) {
-                logger.error('CyberSource webhook error', { authId, error: (err as Error).message });
+        setTimeout(() => this.sendWebhookWithRetry(authId, 0), this.settlementDelayMs);
+    }
+
+    private async sendWebhookWithRetry(authId: string, attempt: number): Promise<void> {
+        const MAX_RETRIES = 3;
+        const payload = this.generateSettlementPayload(authId);
+
+        try {
+            logger.info('Sending CyberSource webhook', { authId, attempt: attempt + 1 });
+            const response = await fetch(this.webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
-        }, this.settlementDelayMs);
+            logger.info('CyberSource webhook sent successfully', { authId, status: payload.status });
+
+        } catch (err) {
+            logger.error('CyberSource webhook delivery failed', {
+                authId,
+                attempt: attempt + 1,
+                error: (err as Error).message
+            });
+
+            if (attempt < MAX_RETRIES) {
+                const backoff = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s...
+                logger.debug('Retrying webhook...', { authId, nextAttemptIn: backoff });
+                setTimeout(() => this.sendWebhookWithRetry(authId, attempt + 1), backoff);
+            } else {
+                logger.error('CyberSource webhook permanently failed after retries', { authId });
+            }
+        }
     }
 
     private generateSettlementPayload(authId: string): WebhookPayload {

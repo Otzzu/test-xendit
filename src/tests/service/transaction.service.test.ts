@@ -136,6 +136,30 @@ describe('TransactionService (service-level)', () => {
             await expect(txService.handleSettlementWebhook(webhook)).resolves.toBeUndefined();
             expect(queueCreditBalance).not.toHaveBeenCalled();
         });
+        it('handles concurrent webhooks safely (race condition check)', async () => {
+            const txRepo = new InMemoryTransactionRepository();
+            const accRepo = new InMemoryAccountRepository();
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(100);
+            const txService = new TransactionService(txRepo, gateway, accountService);
+
+            const tx = await txService.authorizeTransaction(1, 1000);
+            const webhook: WebhookPayload = {
+                authId: tx.authId!,
+                settlementId: 'stl_race',
+                status: 'SETTLED',
+            };
+
+            // Fire mixed duplicates concurrently
+            await Promise.all([
+                txService.handleSettlementWebhook(webhook),
+                txService.handleSettlementWebhook(webhook),
+                txService.handleSettlementWebhook(webhook)
+            ]);
+
+            // Database should still be consistent (Queue called only once)
+            expect(queueCreditBalance).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('getTransaction', () => {
