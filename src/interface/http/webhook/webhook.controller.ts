@@ -20,6 +20,8 @@ export class WebhookController {
             return res.status(200).json({ received: true });
         } catch (err) {
             logger.error('Webhook processing failed', { authId: payload.authId, error: (err as Error).message });
+            // Return 500 so gateway knows to retry (for transient errors)
+            // Ideally we would differentiate specific error types here
             return res.status(500).json({ error: 'Failed to process webhook' });
         }
     };

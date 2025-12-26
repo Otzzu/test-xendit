@@ -92,4 +92,28 @@ describe('PaymentController - Idempotency', () => {
 
         expect(mockPaymentService.createPayment).toHaveBeenCalledTimes(2);
     });
+
+    it('reprocesses payment if idempotency key expired', async () => {
+        const mockTx = { id: 1, accountId: 1, amount: 1000, status: 'AUTHORIZED' };
+        (mockPaymentService.createPayment as jest.Mock).mockResolvedValue(mockTx);
+
+        const req = {
+            headers: { 'x-idempotency-key': 'expired-key' },
+            body: validBody,
+        } as unknown as Request;
+
+        // First request
+        await controller.createPayment(req, mockRes as Response);
+        expect(mockPaymentService.createPayment).toHaveBeenCalledTimes(1);
+
+        // Advance time by 25 hours (past 24h/1h default TTL)
+        jest.useFakeTimers();
+        jest.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+
+        // Second request with same key
+        await controller.createPayment(req, mockRes as Response);
+        expect(mockPaymentService.createPayment).toHaveBeenCalledTimes(2); // Should run again
+
+        jest.useRealTimers();
+    });
 });
