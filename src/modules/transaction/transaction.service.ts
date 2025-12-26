@@ -4,6 +4,7 @@ import { CyberSourceSimulator, WebhookPayload } from '../../infrastructure/gatew
 import { Transaction } from './transaction.entity';
 import { TransactionRepository } from './transaction.repository';
 import { queueCreditBalance } from '../../infrastructure/queue';
+import { logger } from '../../shared/utils/logger';
 
 export class TransactionService {
   constructor(
@@ -17,7 +18,7 @@ export class TransactionService {
     const { authId } = this.gateway.authorize(accountId, amount);
 
     const now = new Date().toISOString();
-    return await this.repo.save({
+    const tx = await this.repo.save({
       accountId,
       amount,
       status: 'AUTHORIZED',
@@ -25,18 +26,20 @@ export class TransactionService {
       createdAt: now,
       updatedAt: now,
     });
+
+    logger.info('Transaction authorized', { transactionId: tx.id, accountId, amount, authId });
+    return tx;
   }
 
   async handleSettlementWebhook(payload: WebhookPayload): Promise<void> {
     const tx = await this.repo.findByAuthId(payload.authId);
     if (!tx) {
-      console.error(`[Webhook] Transaction not found for authId: ${payload.authId}`);
+      logger.warn('Transaction not found for webhook', { authId: payload.authId });
       return;
     }
 
-    // Idempotency: skip if already processed
     if (tx.status === 'SETTLED' || tx.status === 'FAILED') {
-      console.log(`[Webhook] Transaction ${tx.id} already ${tx.status}, ignoring`);
+      logger.info('Transaction already processed, skipping', { transactionId: tx.id, status: tx.status });
       return;
     }
 
@@ -48,13 +51,13 @@ export class TransactionService {
       tx.updatedAt = now;
       await this.repo.update(tx);
       await queueCreditBalance(tx.accountId, tx.amount);
-      console.log(`[Webhook] Transaction ${tx.id} settled, balance update queued`);
+      logger.info('Transaction settled', { transactionId: tx.id, settlementId: payload.settlementId });
     } else {
       tx.status = 'FAILED';
       tx.failureReason = payload.failureReason || 'Settlement failed';
       tx.updatedAt = now;
       await this.repo.update(tx);
-      console.log(`[Webhook] Transaction ${tx.id} failed: ${tx.failureReason}`);
+      logger.warn('Transaction failed', { transactionId: tx.id, reason: tx.failureReason });
     }
   }
 

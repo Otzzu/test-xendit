@@ -1,3 +1,5 @@
+import { logger } from '../../shared/utils/logger';
+
 export type GatewayMode = 'ALWAYS_OK' | 'ALWAYS_FAIL' | 'RANDOM_FAIL';
 
 export interface AuthorizationResult {
@@ -39,12 +41,12 @@ export class CyberSourceSimulator {
                     body: JSON.stringify(payload),
                 });
                 if (!response.ok) {
-                    console.error(`[CyberSource] Webhook failed: ${response.status}`);
+                    logger.error('CyberSource webhook failed', { authId, statusCode: response.status });
                 } else {
-                    console.log(`[CyberSource] Webhook sent for ${authId}: ${payload.status}`);
+                    logger.info('CyberSource webhook sent', { authId, status: payload.status });
                 }
             } catch (err) {
-                console.error(`[CyberSource] Webhook error:`, err);
+                logger.error('CyberSource webhook error', { authId, error: (err as Error).message });
             }
         }, this.settlementDelayMs);
     }
