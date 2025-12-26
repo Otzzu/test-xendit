@@ -2,6 +2,7 @@ import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { CreditBalanceJobData } from './settlement.queue';
 import { AccountService } from '../../modules/account/account.service';
+import { logger } from '../../shared/utils/logger';
 
 let worker: Worker | null = null;
 
@@ -14,22 +15,22 @@ export function startCreditBalanceWorker(accountService: AccountService): Worker
         'credit-balance',
         async (job: Job<CreditBalanceJobData>) => {
             const { accountId, amount } = job.data;
-            console.log(`[Worker] Processing credit balance for account ${accountId}, amount ${amount}`);
+            logger.info('Processing credit balance', { jobId: job.id, accountId, amount });
             await accountService.credit(accountId, amount);
-            console.log(`[Worker] Credit balance completed for account ${accountId}`);
+            logger.info('Credit balance completed', { jobId: job.id, accountId, amount });
         },
         { connection, concurrency: 5 }
     );
 
     worker.on('completed', (job) => {
-        console.log(`[Worker] Job ${job.id} completed for account ${job.data.accountId}`);
+        logger.info('Job completed', { jobId: job.id, accountId: job.data.accountId });
     });
 
     worker.on('failed', (job, err) => {
-        console.error(`[Worker] Job ${job?.id} failed for account ${job?.data.accountId}: ${err.message}`);
+        logger.error('Job failed', { jobId: job?.id, accountId: job?.data.accountId, error: err.message });
     });
 
-    console.log('[Worker] Credit balance worker started');
+    logger.info('Credit balance worker started');
     return worker;
 }
 
@@ -37,7 +38,7 @@ export async function stopCreditBalanceWorker(): Promise<void> {
     if (worker) {
         await worker.close();
         worker = null;
-        console.log('[Worker] Credit balance worker stopped');
+        logger.info('Credit balance worker stopped');
     }
 }
 
