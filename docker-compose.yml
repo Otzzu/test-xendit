@@ -15,6 +15,16 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   app:
     build: .
     ports:
@@ -22,10 +32,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       - DATABASE_URL=postgresql://app:app@db:5432/xendit
+      - REDIS_URL=redis://redis:6379
       - NODE_ENV=production
     restart: unless-stopped
     healthcheck:
@@ -43,10 +56,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - NODE_ENV=test
       - DATABASE_URL=postgresql://app:app@db:5432/xendit
+      - REDIS_URL=redis://redis:6379
       - USE_POSTGRES=false
 
 volumes:
   pgdata:
+
+

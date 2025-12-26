@@ -1,16 +1,20 @@
-import { CyberSourceSimulator } from '../../infrastructure/gateways/cybersource.simulator';
+import { CyberSourceSimulator, WebhookPayload } from '../../infrastructure/gateways/cybersource.simulator';
 import { PostgresAccountRepository } from '../../infrastructure/persistance/postgres/account.repository.postgres';
 import { PostgresTransactionRepository } from '../../infrastructure/persistance/postgres/transaction.repository.postgres';
-import { prisma, pool } from '../../infrastructure/persistance/postgres/prisma';
+import { prisma } from '../../infrastructure/persistance/postgres/prisma';
 
 import { AccountService } from '../../modules/account/account.service';
 import { TransactionService } from '../../modules/transaction/transaction.service';
 
+// Mock queueCreditBalance to avoid Redis dependency in tests
+jest.mock('../../infrastructure/queue', () => ({
+    queueCreditBalance: jest.fn().mockResolvedValue(undefined),
+}));
+
+import { queueCreditBalance } from '../../infrastructure/queue';
+
 // Skip tests if DATABASE_URL is not set (running in CI without DB)
 const describeIfPostgres = process.env.DATABASE_URL ? describe : describe.skip;
-
-// Helper to wait for async operations (real time, not fake)
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describeIfPostgres('TransactionService (PostgreSQL integration)', () => {
     let txRepo: PostgresTransactionRepository;
@@ -25,6 +29,7 @@ describeIfPostgres('TransactionService (PostgreSQL integration)', () => {
     });
 
     beforeEach(async () => {
+        jest.clearAllMocks();
         // Clean up transactions
         await prisma.transaction.deleteMany({});
 
@@ -42,168 +47,126 @@ describeIfPostgres('TransactionService (PostgreSQL integration)', () => {
         accRepo = new PostgresAccountRepository(prisma);
     }, 10000);
 
-    // Helper to track background promises
-    // This allows us to explicitly await the background "fire-and-forget" tasks
-    function trackBackgroundWork(service: AccountService) {
-        const pending: Promise<any>[] = [];
-        const original = service.creditAfterSettlement.bind(service);
+    describe('authorizeTransaction', () => {
+        it('authorizes immediately and stores in database', async () => {
+            const accountService = new AccountService(accRepo);
+            // No webhook URL needed in tests - we'll call handleSettlementWebhook directly
+            const gateway = new CyberSourceSimulator(5000, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-        service.creditAfterSettlement = (id, amt) => {
-            const p = original(id, amt);
-            // Catch errors to prevent unhandled rejection noise in tests (handled in service logic anyway)
-            const tracked = p.catch(err => console.error('Background task error:', err));
-            pending.push(tracked);
-            return p;
-        };
+            const tx = await txService.authorizeTransaction(1, 1000);
 
-        return {
-            awaitAll: async () => Promise.all(pending)
-        };
-    }
+            expect(tx.status).toBe('AUTHORIZED');
+            expect(tx.authId).toBeDefined();
 
-    it('authorizes immediately, settles asynchronously, then updates balance', async () => {
-        const accountService = new AccountService(accRepo);
-        const tracker = trackBackgroundWork(accountService);
+            // Verify persisted in database
+            const dbTx = await prisma.transaction.findUnique({ where: { id: tx.id } });
+            expect(dbTx).not.toBeNull();
+            expect(dbTx?.status).toBe('AUTHORIZED');
+        }, 10000);
+    });
 
-        // Very short delays for integration tests (10ms settlement, 10ms ledger)
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
+    describe('handleSettlementWebhook', () => {
+        it('updates transaction to SETTLED and queues balance credit', async () => {
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(5000, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-        // Act: authorize
-        const tx = await txService.authorizeTransaction(1, 1000);
+            const tx = await txService.authorizeTransaction(1, 1000);
 
-        // Assert: authorized immediately
-        expect(tx.status).toBe('AUTHORIZED');
+            const webhook: WebhookPayload = {
+                authId: tx.authId!,
+                settlementId: 'stl_123',
+                status: 'SETTLED',
+            };
 
-        // Balance should be 0 initially
-        expect((await accountService.getAccount(1)).balance).toBe(0);
+            await txService.handleSettlementWebhook(webhook);
 
-        // Act: settlement runs in background
-        void txService.settleTransaction(tx.id);
+            const updated = await txService.getTransaction(tx.id);
+            expect(updated.status).toBe('SETTLED');
+            expect(updated.settlementId).toBe('stl_123');
 
-        // Now settled 
-        // We wait a bit for the sync part of settle to finish (status update)
-        await wait(200);
-        const settled = await txService.getTransaction(tx.id);
-        expect(settled.status).toBe('SETTLED');
+            // Verify balance credit was queued
+            expect(queueCreditBalance).toHaveBeenCalledWith(1, 1000);
+        }, 10000);
 
-        // WAIT for background credit to finish strictly by promise
-        await tracker.awaitAll();
+        it('updates transaction to FAILED on failed webhook', async () => {
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(5000, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-        // Verify result
-        const account = await accountService.getAccount(1);
-        expect(account.balance).toBe(1000);
-    }, 30000);
+            const tx = await txService.authorizeTransaction(1, 1000);
 
-    it('is idempotent: settling an already SETTLED transaction does not double-credit', async () => {
-        const accountService = new AccountService(accRepo);
-        const tracker = trackBackgroundWork(accountService);
+            const webhook: WebhookPayload = {
+                authId: tx.authId!,
+                settlementId: '',
+                status: 'FAILED',
+                failureReason: 'Gateway timeout',
+            };
 
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
+            await txService.handleSettlementWebhook(webhook);
 
-        const tx = await txService.authorizeTransaction(1, 1000);
+            const updated = await txService.getTransaction(tx.id);
+            expect(updated.status).toBe('FAILED');
+            expect(updated.failureReason).toBe('Gateway timeout');
+            expect(queueCreditBalance).not.toHaveBeenCalled();
+        }, 10000);
 
-        // First settle
-        await txService.settleTransaction(tx.id);
+        it('is idempotent: ignores webhook for already SETTLED transaction', async () => {
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(5000, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-        expect((await txService.getTransaction(tx.id)).status).toBe('SETTLED');
+            const tx = await txService.authorizeTransaction(1, 1000);
 
-        // settle again - should be no-op
-        await txService.settleTransaction(tx.id);
+            const webhook: WebhookPayload = {
+                authId: tx.authId!,
+                settlementId: 'stl_123',
+                status: 'SETTLED',
+            };
 
-        // Status still SETTLED
-        expect((await txService.getTransaction(tx.id)).status).toBe('SETTLED');
+            await txService.handleSettlementWebhook(webhook);
+            await txService.handleSettlementWebhook(webhook); // Second call
 
-        // WAIT for background credit to finish (from the first call)
-        await tracker.awaitAll();
+            // Should only queue once
+            expect(queueCreditBalance).toHaveBeenCalledTimes(1);
+        }, 10000);
 
-        const account = await accountService.getAccount(1);
-        expect(account.balance).toBe(1000);
-    }, 30000);
+        it('finds transaction by authId correctly', async () => {
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(5000, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-    it('handles gateway failure by marking transaction as FAILED', async () => {
-        const accountService = new AccountService(accRepo);
-        const tracker = trackBackgroundWork(accountService);
+            // Create multiple transactions
+            const tx1 = await txService.authorizeTransaction(1, 1000);
+            const tx2 = await txService.authorizeTransaction(2, 2000);
 
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_FAIL');
-        const txService = new TransactionService(txRepo, gateway, accountService);
+            // Settle tx2 via webhook
+            const webhook: WebhookPayload = {
+                authId: tx2.authId!,
+                settlementId: 'stl_456',
+                status: 'SETTLED',
+            };
 
-        const tx = await txService.authorizeTransaction(1, 1000);
+            await txService.handleSettlementWebhook(webhook);
 
-        // Settlement will fail due to gateway
-        await txService.settleTransaction(tx.id);
+            // tx2 should be settled
+            const updated2 = await txService.getTransaction(tx2.id);
+            expect(updated2.status).toBe('SETTLED');
 
-        const updated = await txService.getTransaction(tx.id);
-        expect(updated.status).toBe('FAILED');
+            // tx1 should still be authorized
+            const updated1 = await txService.getTransaction(tx1.id);
+            expect(updated1.status).toBe('AUTHORIZED');
+        }, 10000);
+    });
 
-        await tracker.awaitAll(); // Just in case, though none should be spawned
+    describe('getTransaction', () => {
+        it('throws 404 for non-existent transaction', async () => {
+            const accountService = new AccountService(accRepo);
+            const gateway = new CyberSourceSimulator(100, 'ALWAYS_OK', 0.1, 'http://test:3000');
+            const txService = new TransactionService(txRepo, gateway, accountService);
 
-        // Balance NOT credited
-        expect((await accountService.getAccount(1)).balance).toBe(0);
-    }, 30000);
-
-    it('throws 404 for non-existent transaction', async () => {
-        const accountService = new AccountService(accRepo);
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
-
-        await expect(txService.settleTransaction(999)).rejects.toThrow('Transaction not found');
-    }, 30000);
-
-    it('throws 409 if transaction has no authId', async () => {
-        const accountService = new AccountService(accRepo);
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
-
-        const tx = await txRepo.save({
-            accountId: 1,
-            amount: 100,
-            status: 'AUTHORIZED', // but NO authId
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        });
-
-        await expect(txService.settleTransaction(tx.id)).rejects.toThrow('Missing auth reference');
-    }, 30000);
-
-    it('is idempotent for FAILED transactions', async () => {
-        const accountService = new AccountService(accRepo);
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
-
-        const tx = await txRepo.save({
-            accountId: 1,
-            amount: 100,
-            status: 'FAILED',
-            authId: 'auth_123',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        });
-
-        // Settle should do nothing
-        await txService.settleTransaction(tx.id);
-
-        const check = await txService.getTransaction(tx.id);
-        expect(check.status).toBe('FAILED');
-    }, 30000);
-
-    it('persists data correctly in database', async () => {
-        const accountService = new AccountService(accRepo);
-        const tracker = trackBackgroundWork(accountService);
-
-        const gateway = new CyberSourceSimulator(10, 'ALWAYS_OK');
-        const txService = new TransactionService(txRepo, gateway, accountService);
-
-        const tx = await txService.authorizeTransaction(1, 500);
-        await txService.settleTransaction(tx.id);
-
-        // Verify data persisted in database directly
-        const dbTx = await prisma.transaction.findUnique({ where: { id: tx.id } });
-        expect(dbTx?.status).toBe('SETTLED');
-        expect(dbTx?.settlementId).toBeTruthy();
-
-        // WAIT for background credit to finish
-        await tracker.awaitAll();
-    }, 30000);
+            await expect(txService.getTransaction(99999)).rejects.toThrow('Transaction not found');
+        }, 10000);
+    });
 });

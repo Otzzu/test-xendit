@@ -1,38 +1,65 @@
-import { HttpError } from '../../shared/errors/http-error';
-
 export type GatewayMode = 'ALWAYS_OK' | 'ALWAYS_FAIL' | 'RANDOM_FAIL';
 
 export interface AuthorizationResult {
     authId: string;
 }
 
-export interface SettlementResult {
+export interface WebhookPayload {
+    authId: string;
     settlementId: string;
+    status: 'SETTLED' | 'FAILED';
+    failureReason?: string;
 }
 
-
 export class CyberSourceSimulator {
-    constructor(
-        private readonly settlementDelayMs: number = 20000,
-        private readonly mode: GatewayMode = 'ALWAYS_OK',
-        private readonly failRate: number = 0.1
-    ) { }
+    private webhookUrl: string;
 
-    authorize(_accountId: number, _amount: number): AuthorizationResult {
-        return { authId: `auth_${Date.now()}_${Math.random().toString(16).slice(2)}` };
+    constructor(
+        private readonly settlementDelayMs: number = 5000,
+        private readonly mode: GatewayMode = 'ALWAYS_OK',
+        private readonly failRate: number = 0.1,
+        webhookBaseUrl: string = 'http://localhost:3000'
+    ) {
+        this.webhookUrl = `${webhookBaseUrl}/webhooks/cybersource/settlement`;
     }
 
-    async settle(authId: string): Promise<SettlementResult> {
-        await new Promise((r) => setTimeout(r, this.settlementDelayMs));
+    authorize(_accountId: number, _amount: number): AuthorizationResult {
+        const authId = `auth_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        this.scheduleSettlementWebhook(authId);
+        return { authId };
+    }
 
+    private scheduleSettlementWebhook(authId: string): void {
+        setTimeout(async () => {
+            const payload = this.generateSettlementPayload(authId);
+            try {
+                const response = await fetch(this.webhookUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!response.ok) {
+                    console.error(`[CyberSource] Webhook failed: ${response.status}`);
+                } else {
+                    console.log(`[CyberSource] Webhook sent for ${authId}: ${payload.status}`);
+                }
+            } catch (err) {
+                console.error(`[CyberSource] Webhook error:`, err);
+            }
+        }, this.settlementDelayMs);
+    }
+
+    private generateSettlementPayload(authId: string): WebhookPayload {
         if (this.mode === 'ALWAYS_FAIL') {
-            throw new HttpError(502, 'GATEWAY_ERROR', 'Settlement failed (simulated)', { authId });
+            return { authId, settlementId: '', status: 'FAILED', failureReason: 'Settlement failed (simulated)' };
         }
-
         if (this.mode === 'RANDOM_FAIL' && Math.random() < this.failRate) {
-            throw new HttpError(504, 'GATEWAY_TIMEOUT', 'Gateway timeout (simulated)', { authId });
+            return { authId, settlementId: '', status: 'FAILED', failureReason: 'Gateway timeout (simulated)' };
         }
-
-        return { settlementId: `stl_${Date.now()}_${Math.random().toString(16).slice(2)}` };
+        return {
+            authId,
+            settlementId: `stl_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            status: 'SETTLED',
+        };
     }
 }
