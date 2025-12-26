@@ -23,6 +23,8 @@ docker-compose logs -f app
 # Stop
 docker-compose down -v
 ```
+> [!NOTE]  
+> When running with Docker (PostgreSQL), the database is **auto-seeded with 3 demo accounts** (IDs: `1`, `2`, `3`) initialized with `0` balance. Use these IDs for testing.
 
 ### Run Locally
 ```bash
