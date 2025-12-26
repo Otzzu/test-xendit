@@ -1,4 +1,4 @@
-#!/bin/sh
+﻿#!/bin/sh
 set -e
 
 if [ "$USE_POSTGRES" = "true" ]; then
