@@ -5,8 +5,3 @@ coverage
 .gitignore
 .env
 README.md
-task.md
-implementation_plan.md
-walkthrough.md
-transaction_processor_assignment_nodejs_boilerplate.docx.pdf
-.gemini
