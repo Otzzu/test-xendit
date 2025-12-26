@@ -26,6 +26,9 @@ docker-compose down -v
 > [!NOTE]  
 > When running with Docker (PostgreSQL), the database is **auto-seeded with 3 demo accounts** (IDs: `1`, `2`, `3`) initialized with `0` balance. Use these IDs for testing.
 
+> [!WARNING]  
+> **Windows Users:** Ensure `scripts/start.sh` uses **LF (Line Feed)** line endings. If saved with CRLF, Docker containers may fail to start with errors like `exec /usr/src/app/scripts/start.sh: no such file or directory`. To fix, change the line ending setting from CRLF to LF in your editor.
+
 ### Run Locally
 ```bash
 npm install
