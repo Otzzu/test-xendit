@@ -14,6 +14,7 @@ A Node.js + TypeScript payment processing service that simulates CyberSource int
 cp .env.example .env
 
 # 2. Start all services (PostgreSQL, Redis, App)
+# App will be accessible at http://localhost:3000 (default)
 docker-compose up -d
 
 # 3. View logs
@@ -67,15 +68,26 @@ GET /health
 
 ## Running Tests
 
+### Run with Docker (Recommended)
 ```bash
-# All tests (in Docker)
+# Option 1: Run standard tests (Unit + In-Memory)
 docker-compose run --rm tests
 
-# In-memory tests only
+# Option 2: Run FULL tests including PostgreSQL Integration
+# Note: Requires USE_POSTGRES=true. This command starts DB, runs tests, and cleans up.
+docker-compose run --rm -e USE_POSTGRES=true tests
+```
+
+### Run Locally (Requires Node.js)
+```bash
+# Run unit & in-memory tests
 npm test
 
-# PostgreSQL integration tests
-docker-compose run --rm -e USE_POSTGRES=true tests
+# Run with PostgreSQL (Requires local DB running)
+# On Windows (PowerShell):
+# $env:USE_POSTGRES="true"; npm test
+# On Mac/Linux:
+# USE_POSTGRES=true npm test
 ```
 
 ## Test Coverage
