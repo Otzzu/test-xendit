@@ -14,6 +14,10 @@ export class InMemoryTransactionRepository implements TransactionRepository {
     return db.transactions.find((t) => t.id === id);
   }
 
+  async findByAuthId(authId: string): Promise<Transaction | undefined> {
+    return db.transactions.find((t) => t.authId === authId);
+  }
+
   async update(updated: Transaction): Promise<void> {
     const idx = db.transactions.findIndex((t) => t.id === updated.id);
     if (idx !== -1) db.transactions[idx] = updated;
@@ -23,3 +27,4 @@ export class InMemoryTransactionRepository implements TransactionRepository {
     db.clear();
   }
 }
+

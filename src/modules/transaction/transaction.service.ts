@@ -1,8 +1,9 @@
 import { HttpError } from '../../shared/errors/http-error';
 import { AccountService } from '../account/account.service';
-import { CyberSourceSimulator } from '../../infrastructure/gateways/cybersource.simulator';
+import { CyberSourceSimulator, WebhookPayload } from '../../infrastructure/gateways/cybersource.simulator';
 import { Transaction } from './transaction.entity';
 import { TransactionRepository } from './transaction.repository';
+import { queueCreditBalance } from '../../infrastructure/queue';
 
 export class TransactionService {
   constructor(
@@ -12,9 +13,7 @@ export class TransactionService {
   ) { }
 
   async authorizeTransaction(accountId: number, amount: number): Promise<Transaction> {
-    // Ensure account exists before creating transaction (required for FK constraint)
     await this.accountService.getAccount(accountId);
-
     const { authId } = this.gateway.authorize(accountId, amount);
 
     const now = new Date().toISOString();
@@ -28,49 +27,34 @@ export class TransactionService {
     });
   }
 
-  async settleTransaction(transactionId: number): Promise<void> {
-    const tx = await this.repo.findById(transactionId);
+  async handleSettlementWebhook(payload: WebhookPayload): Promise<void> {
+    const tx = await this.repo.findByAuthId(payload.authId);
     if (!tx) {
-      throw new HttpError(404, 'NOT_FOUND', 'Transaction not found');
+      console.error(`[Webhook] Transaction not found for authId: ${payload.authId}`);
+      return;
     }
 
+    // Idempotency: skip if already processed
     if (tx.status === 'SETTLED' || tx.status === 'FAILED') {
-      return; // no-op (idempotent)
+      console.log(`[Webhook] Transaction ${tx.id} already ${tx.status}, ignoring`);
+      return;
     }
 
-    if (!tx.authId) {
-      throw new HttpError(
-        409,
-        'INVALID_TRANSACTION_STATE',
-        'Missing auth reference for settlement'
-      );
-    }
+    const now = new Date().toISOString();
 
-    try {
-      const { settlementId } = await this.gateway.settle(tx.authId);
-
-      const now = new Date().toISOString();
+    if (payload.status === 'SETTLED') {
       tx.status = 'SETTLED';
-      tx.settlementId = settlementId;
+      tx.settlementId = payload.settlementId;
       tx.updatedAt = now;
       await this.repo.update(tx);
-
-      void this.accountService.creditAfterSettlement(tx.accountId, tx.amount);
-    } catch (err: unknown) {
-      const now = new Date().toISOString();
+      await queueCreditBalance(tx.accountId, tx.amount);
+      console.log(`[Webhook] Transaction ${tx.id} settled, balance update queued`);
+    } else {
       tx.status = 'FAILED';
-
-      let message = 'Settlement failed';
-      if (err instanceof Error) message = err.message;
-      else if (err instanceof HttpError) message = err.message;
-      else if (typeof err === 'string') message = err;
-
-      tx.failureReason = message;
+      tx.failureReason = payload.failureReason || 'Settlement failed';
       tx.updatedAt = now;
       await this.repo.update(tx);
-
-      // For background processing, we log the message only to avoid Jest stack overflow with complex error objects
-      console.error(`Settlement error for tx ${transactionId}: ${message}`);
+      console.log(`[Webhook] Transaction ${tx.id} failed: ${tx.failureReason}`);
     }
   }
 
